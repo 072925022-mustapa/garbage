@@ -649,6 +649,13 @@ elif page == "🏋️ Training":
         st.info("💡 InceptionV3 menggunakan bobot pretrained ImageNet dengan input size **299×299px**. Layer base di-freeze, hanya top layer yang dilatih.")
 
     if st.button("🚀 Mulai Training", type="primary"):
+        # Catat waktu mulai dan tampilkan di judul
+        train_start_time = datetime.now()
+        title_placeholder = st.empty()
+        title_placeholder.subheader(
+            f"⏱️ Training dimulai: {train_start_time.strftime('%H:%M:%S')}"
+        )
+
         with st.spinner("Memuat dataset..."):
             train_ds, val_ds, test_ds, class_names = load_datasets(IMG_SIZE)
             num_classes = len(class_names)
@@ -804,6 +811,24 @@ elif page == "🏋️ Training":
 
         st.success(f"✅ Training selesai! Model disimpan ke `{MODEL_PATH}`.")
         st.balloons()
+
+        # Update judul dengan waktu selesai dan durasi
+        train_end_time = datetime.now()
+        duration_seconds = int((train_end_time - train_start_time).total_seconds())
+        hours, remainder = divmod(duration_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            duration_str = f"{hours} jam {minutes} menit {seconds} detik"
+        elif minutes > 0:
+            duration_str = f"{minutes} menit {seconds} detik"
+        else:
+            duration_str = f"{seconds} detik"
+
+        title_placeholder.subheader(
+            f"⏱️ {train_start_time.strftime('%H:%M:%S')} — "
+            f"{train_end_time.strftime('%H:%M:%S')} "
+            f"({duration_str})"
+        )
 
         fig = plot_history(history_log)
         st.pyplot(fig)
