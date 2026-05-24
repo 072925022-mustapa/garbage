@@ -1,0 +1,13 @@
+name: garbage-cnn
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - numpy
+  - matplotlib
+  - jupyter
+  - ipykernel
+  - pip:
+      - tensorflow==2.16.1
