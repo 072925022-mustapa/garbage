@@ -1,13 +1,13 @@
 {
-  "timestamp": "2026-05-24T14:34:03.111349",
+  "timestamp": "2026-05-24T16:52:12.572457",
   "evaluasi_model": [
     {
       "Model": "CNN",
-      "Accuracy (%)": 62.08,
-      "Precision (%)": 62.04,
-      "Recall (%)": 60.0,
-      "F1-Score (%)": 60.18,
-      "Loss": 1.0178393125534058,
+      "Accuracy (%)": 56.74,
+      "Precision (%)": 60.84,
+      "Recall (%)": 50.83,
+      "F1-Score (%)": 51.98,
+      "Loss": 1.061476707458496,
       "Input Size": "128×128",
       "Status": "Ready"
     },

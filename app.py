@@ -649,6 +649,13 @@ elif page == "🏋️ Training":
         st.info("💡 InceptionV3 menggunakan bobot pretrained ImageNet dengan input size **299×299px**. Layer base di-freeze, hanya top layer yang dilatih.")
 
     if st.button("🚀 Mulai Training", type="primary"):
+        # Cek apakah berjalan di Streamlit Cloud (bukan lokal)
+        is_cloud = os.environ.get("STREAMLIT_SHARING_MODE") or os.path.exists("/mount/src")
+        if is_cloud:
+            st.error("⚠️ Proses training hanya bisa dilakukan pada server lokal. "
+                     "Silakan jalankan aplikasi di komputer Anda untuk melatih model.")
+            st.stop()
+
         # Catat waktu mulai dan tampilkan di judul
         train_start_time = datetime.now()
         title_placeholder = st.empty()
