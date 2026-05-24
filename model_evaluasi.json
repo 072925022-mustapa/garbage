@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-05-24T14:34:03.111349",
+  "evaluasi_model": [
+    {
+      "Model": "CNN",
+      "Accuracy (%)": 62.08,
+      "Precision (%)": 62.04,
+      "Recall (%)": 60.0,
+      "F1-Score (%)": 60.18,
+      "Loss": 1.0178393125534058,
+      "Input Size": "128×128",
+      "Status": "Ready"
+    },
+    {
+      "Model": "MobileNetV2",
+      "Accuracy (%)": 87.36,
+      "Precision (%)": 88.08,
+      "Recall (%)": 84.52,
+      "F1-Score (%)": 85.57,
+      "Loss": 0.40821903944015503,
+      "Input Size": "224×224",
+      "Status": "Ready"
+    },
+    {
+      "Model": "InceptionV3",
+      "Accuracy (%)": 89.04,
+      "Precision (%)": 86.65,
+      "Recall (%)": 84.1,
+      "F1-Score (%)": 85.05,
+      "Loss": 0.3333146870136261,
+      "Input Size": "299×299",
+      "Status": "Ready"
+    },
+    {
+      "Model": "EfficientNet",
+      "Accuracy (%)": 93.26,
+      "Precision (%)": 93.05,
+      "Recall (%)": 91.83,
+      "F1-Score (%)": 92.25,
+      "Loss": 0.2518271505832672,
+      "Input Size": "224×224",
+      "Status": "Ready"
+    }
+  ]
+}

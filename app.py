@@ -6,6 +6,8 @@ from tensorflow.keras import layers
 import os
 import time
 from PIL import Image
+import json
+from datetime import datetime
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 DATA_DIR    = r"input/Garbage classification/Garbage classification"
@@ -149,6 +151,50 @@ def evaluate_model_cached(model_path: str, model_name: str, img_size: tuple, mod
     will change the cache key and force re-evaluation.
     """
     return evaluate_model_now(model_path, model_name, img_size)
+
+
+@st.cache_data(ttl=3600)
+def get_detailed_evaluation_cached(model_path: str, model_name: str, img_size: tuple, model_mtime: float):
+    """Mengevaluasi model secara mendalam untuk mendapatkan metrik lengkap dan prediksi pada test set."""
+    if not os.path.exists(model_path):
+        return None
+
+    model = load_saved_model(model_path)
+    if model is None:
+        return None
+
+    eval_img_size = img_size
+    if model_name == "EfficientNet":
+        try:
+            actual_size = model.input_shape[1]
+            eval_img_size = (actual_size, actual_size)
+        except Exception:
+            eval_img_size = img_size
+
+    _, _, test_ds, class_names = load_datasets(eval_img_size)
+    test_ds_eval = normalize_ds(test_ds) if model_name == "CNN" else test_ds
+
+    try:
+        loss, acc = model.evaluate(test_ds_eval, verbose=0)
+
+        y_true, y_prob = [], []
+        for images, labels in test_ds_eval:
+            y_true.extend(labels.numpy())
+            y_prob.extend(model.predict(images, verbose=0))
+
+        y_true = np.array(y_true)
+        y_prob = np.array(y_prob)
+
+        return {
+            "y_true": y_true,
+            "y_prob": y_prob,
+            "loss": float(loss),
+            "accuracy": float(acc),
+            "class_names": class_names,
+        }
+    except Exception:
+        return None
+
 
 
 def build_cnn(num_classes: int) -> tf.keras.Model:
@@ -457,66 +503,104 @@ if page == "🏠 Beranda":
     else:
         import pandas as pd
 
-        rows = []
-        with st.spinner("Memeriksa keberadaan file model dan mengevaluasi model yang tersimpan..."):
-            for model_name, cfg in MODEL_CONFIGS.items():
-                model_path = cfg["model_path"]
-                exists = os.path.exists(model_path)
-                metrics = None
-                if exists:
-                    model_mtime = os.path.getmtime(model_path)
-                    metrics = evaluate_model_cached(model_path, model_name, cfg["img_size"], model_mtime)
+        json_file = "model_evaluasi.json"
+        df = None
 
-                if metrics:
-                    rows.append({
-                        "Model":          model_name,
-                        "Accuracy (%)":   metrics["accuracy"],
-                        "Precision (%)":  metrics["precision"],
-                        "Recall (%)":     metrics["recall"],
-                        "F1-Score (%)":   metrics["f1_score"],
-                        "Loss":           metrics["loss"],
-                        "Input Size":     metrics["input_size"],
-                        "Status":         "Ready",
-                    })
-                else:
-                    rows.append({
-                        "Model":          model_name,
-                        "Accuracy (%)":   np.nan,
-                        "Precision (%)":  np.nan,
-                        "Recall (%)":     np.nan,
-                        "F1-Score (%)":   np.nan,
-                        "Loss":           np.nan,
-                        "Input Size":     f"{cfg['img_size'][0]}×{cfg['img_size'][1]}",
-                        "Status":         "Missing model file" if not exists else "Evaluation failed",
-                    })
-
-        df = pd.DataFrame(rows).set_index("Model")
-
-        numeric_cols = ["Accuracy (%)", "Precision (%)", "Recall (%)", "F1-Score (%)"]
-
-        def highlight_best(col):
-            if col.name not in numeric_cols:
-                return [""] * len(col)
+        # ── Cek apakah file JSON ada ────────────────────────────────────────────
+        if os.path.exists(json_file):
             try:
-                max_val = pd.to_numeric(col, errors="coerce").max()
-                return ["background-color: #d4edda; font-weight: bold"
-                        if v == max_val else "" for v in pd.to_numeric(col, errors="coerce")]
-            except Exception:
-                return [""] * len(col)
+                with open(json_file, "r", encoding="utf-8") as f:
+                    eval_data = json.load(f)
+                rows = eval_data.get("evaluasi_model", [])
+                df = pd.DataFrame(rows).set_index("Model")
+                st.info(f"📂 Data dimuat dari `{json_file}` (timestamp: {eval_data.get('timestamp', 'N/A')})")
+            except Exception as e:
+                st.error(f"❌ Gagal membaca `{json_file}`: {str(e)}")
+                df = None
+        else:
+            # ── Evaluasi model dan buat DataFrame ────────────────────────────────
+            rows = []
+            with st.spinner("Memeriksa keberadaan file model dan mengevaluasi model yang tersimpan..."):
+                for model_name, cfg in MODEL_CONFIGS.items():
+                    model_path = cfg["model_path"]
+                    exists = os.path.exists(model_path)
+                    metrics = None
+                    if exists:
+                        model_mtime = os.path.getmtime(model_path)
+                        metrics = evaluate_model_cached(model_path, model_name, cfg["img_size"], model_mtime)
 
-        st.dataframe(
-            df.style
-              .apply(highlight_best)
-              .format({
-                  "Accuracy (%)":  "{:.2f}",
-                  "Precision (%)": "{:.2f}",
-                  "Recall (%)":    "{:.2f}",
-                  "F1-Score (%)":  "{:.2f}",
-                  "Loss":          "{:.4f}",
-              }, na_rep="-"),
-            use_container_width=True,
-        )
-        st.caption("🟢 Nilai tertinggi per kolom ditandai hijau. Evaluasi model yang tersimpan dilakukan saat aplikasi dimuat.")
+                    if metrics:
+                        rows.append({
+                            "Model":          model_name,
+                            "Accuracy (%)":   metrics["accuracy"],
+                            "Precision (%)":  metrics["precision"],
+                            "Recall (%)":     metrics["recall"],
+                            "F1-Score (%)":   metrics["f1_score"],
+                            "Loss":           metrics["loss"],
+                            "Input Size":     metrics["input_size"],
+                            "Status":         "Ready",
+                        })
+                    else:
+                        rows.append({
+                            "Model":          model_name,
+                            "Accuracy (%)":   np.nan,
+                            "Precision (%)":  np.nan,
+                            "Recall (%)":     np.nan,
+                            "F1-Score (%)":   np.nan,
+                            "Loss":           np.nan,
+                            "Input Size":     f"{cfg['img_size'][0]}×{cfg['img_size'][1]}",
+                            "Status":         "Missing model file" if not exists else "Evaluation failed",
+                        })
+
+            df = pd.DataFrame(rows).set_index("Model")
+
+            # ── Simpan evaluasi ke JSON ────────────────────────────────────────────
+            try:
+                df_dict = df.reset_index().to_dict(orient="records")
+                for record in df_dict:
+                    for key, val in record.items():
+                        if isinstance(val, float) and np.isnan(val):
+                            record[key] = None
+
+                eval_data = {
+                    "timestamp": datetime.now().isoformat(),
+                    "evaluasi_model": df_dict,
+                }
+
+                with open(json_file, "w", encoding="utf-8") as f:
+                    json.dump(eval_data, f, ensure_ascii=False, indent=2)
+
+                st.success(f"✅ File `{json_file}` berhasil dibuat!")
+            except Exception as e:
+                st.warning(f"⚠️ Gagal membuat `{json_file}`: {str(e)}")
+
+        # ── Tampilkan DataFrame ────────────────────────────────────────────────────
+        if df is not None:
+            numeric_cols = ["Accuracy (%)", "Precision (%)", "Recall (%)", "F1-Score (%)"]
+
+            def highlight_best(col):
+                if col.name not in numeric_cols:
+                    return [""] * len(col)
+                try:
+                    max_val = pd.to_numeric(col, errors="coerce").max()
+                    return ["background-color: #d4edda; font-weight: bold"
+                            if v == max_val else "" for v in pd.to_numeric(col, errors="coerce")]
+                except Exception:
+                    return [""] * len(col)
+
+            st.dataframe(
+                df.style
+                  .apply(highlight_best)
+                  .format({
+                      "Accuracy (%)":  "{:.2f}",
+                      "Precision (%)": "{:.2f}",
+                      "Recall (%)":    "{:.2f}",
+                      "F1-Score (%)":  "{:.2f}",
+                      "Loss":          "{:.4f}",
+                  }, na_rep="-"),
+                use_container_width=True,
+            )
+            st.caption("🟢 Nilai tertinggi per kolom ditandai hijau. Data dimuat dari evaluasi langsung atau file JSON.")
 
     st.markdown("---")
     st.markdown("""
@@ -638,6 +722,7 @@ elif page == "🏋️ Training":
             model_mtime = os.path.getmtime(MODEL_PATH)
             with st.spinner("Memperbarui cache evaluasi..."):
                 _ = evaluate_model_cached(MODEL_PATH, selected_model, IMG_SIZE, model_mtime)
+                _ = get_detailed_evaluation_cached(MODEL_PATH, selected_model, IMG_SIZE, model_mtime)
         except Exception:
             # Jika update cache gagal, lanjutkan tanpa menghentikan alur training
             pass
@@ -661,6 +746,62 @@ elif page == "🏋️ Training":
             y_pred_m = np.array(y_pred_m)
 
             test_loss, test_acc = model.evaluate(test_ds_metric, verbose=0)
+
+            # Hitung precision, recall, f1_score
+            from sklearn.metrics import precision_score, recall_score, f1_score
+            precision_m = precision_score(y_true_m, y_pred_m, average="macro", zero_division=0)
+            recall_m = recall_score(y_true_m, y_pred_m, average="macro", zero_division=0)
+            f1_m = f1_score(y_true_m, y_pred_m, average="macro", zero_division=0)
+
+        # ── Update file model_evaluasi.json dengan metrik terbaru ────────────────
+        json_file = "model_evaluasi.json"
+        try:
+            # Load existing JSON atau buat baru
+            if os.path.exists(json_file):
+                with open(json_file, "r", encoding="utf-8") as f:
+                    eval_data = json.load(f)
+            else:
+                eval_data = {"timestamp": None, "evaluasi_model": []}
+
+            # Cari dan update entry untuk model yang baru dilatih
+            model_found = False
+            for record in eval_data.get("evaluasi_model", []):
+                if record.get("Model") == selected_model:
+                    record.update({
+                        "Accuracy (%)": round(float(test_acc) * 100, 2),
+                        "Precision (%)": round(float(precision_m) * 100, 2),
+                        "Recall (%)": round(float(recall_m) * 100, 2),
+                        "F1-Score (%)": round(float(f1_m) * 100, 2),
+                        "Loss": float(test_loss),
+                        "Input Size": f"{IMG_SIZE[0]}×{IMG_SIZE[1]}",
+                        "Status": "Ready",
+                    })
+                    model_found = True
+                    break
+
+            # Jika model tidak ditemukan, tambahkan entry baru
+            if not model_found:
+                eval_data["evaluasi_model"].append({
+                    "Model": selected_model,
+                    "Accuracy (%)": round(float(test_acc) * 100, 2),
+                    "Precision (%)": round(float(precision_m) * 100, 2),
+                    "Recall (%)": round(float(recall_m) * 100, 2),
+                    "F1-Score (%)": round(float(f1_m) * 100, 2),
+                    "Loss": float(test_loss),
+                    "Input Size": f"{IMG_SIZE[0]}×{IMG_SIZE[1]}",
+                    "Status": "Ready",
+                })
+
+            # Update timestamp
+            eval_data["timestamp"] = datetime.now().isoformat()
+
+            # Simpan kembali ke JSON
+            with open(json_file, "w", encoding="utf-8") as f:
+                json.dump(eval_data, f, ensure_ascii=False, indent=2)
+
+            st.info(f"✅ File `{json_file}` berhasil diperbarui dengan metrik model terbaru!")
+        except Exception as e:
+            st.warning(f"⚠️ Gagal memperbarui `{json_file}`: {str(e)}")
 
         st.success(f"✅ Training selesai! Model disimpan ke `{MODEL_PATH}`.")
         st.balloons()
@@ -761,103 +902,150 @@ elif page == "📊 Evaluasi":
 
     st.info("📂 Evaluasi dilakukan pada **test set (15%)** — data yang tidak pernah dilihat model saat training.")
 
-    with st.spinner("Mengevaluasi model..."):
-        loss, acc = model.evaluate(test_ds_eval, verbose=0)
+    # ── Cek apakah data ada di model_evaluasi.json ────────────────────────────
+    json_file = "model_evaluasi.json"
+    metrics_from_json = None
+    
+    if os.path.exists(json_file):
+        try:
+            with open(json_file, "r", encoding="utf-8") as f:
+                eval_data = json.load(f)
+            rows = eval_data.get("evaluasi_model", [])
+            for row in rows:
+                if row.get("Model") == selected_model:
+                    metrics_from_json = row
+                    break
+            if metrics_from_json:
+                st.info(f"📂 Metrik ringkas dimuat dari `{json_file}` (timestamp: {eval_data.get('timestamp', 'N/A')})")
+        except Exception as e:
+            st.warning(f"⚠️ Gagal membaca `{json_file}`: {str(e)}")
 
-        # Kumpulkan semua prediksi & label dari test set
-        y_true, y_prob = [], []
-        for images, labels in test_ds_eval:
-            y_true.extend(labels.numpy())
-            y_prob.extend(model.predict(images, verbose=0))
-        y_true = np.array(y_true)
-        y_prob = np.array(y_prob)
+    # ── Load metrik dari JSON atau evaluasi model ──────────────────────────────
+    # ── Ambil metrik ringkas terlebih dahulu (jika ada) agar bisa tampil cepat ─────
+    acc = None
+    loss = None
+    precision_macro = None
+    recall_macro = None
+    f1_macro = None
+    accuracy_macro = None
+
+    if metrics_from_json:
+        acc = metrics_from_json.get("Accuracy (%)") / 100.0 if metrics_from_json.get("Accuracy (%)") else None
+        loss = metrics_from_json.get("Loss")
+        precision_macro = metrics_from_json.get("Precision (%)") / 100.0 if metrics_from_json.get("Precision (%)") else None
+        recall_macro = metrics_from_json.get("Recall (%)") / 100.0 if metrics_from_json.get("Recall (%)") else None
+        f1_macro = metrics_from_json.get("F1-Score (%)") / 100.0 if metrics_from_json.get("F1-Score (%)") else None
+        accuracy_macro = acc
+
+    # ── Siapkan placeholder untuk metrik utama agar bisa tampil instan ───────────
+    metrics_placeholder = st.empty()
+
+    def render_metrics_cards(acc_val, loss_val, acc_macro, prec_macro, rec_macro, f1_macro_val):
+        with metrics_placeholder.container():
+            col1, col2 = st.columns(2)
+            col1.metric("✅ Test Accuracy", f"{acc_val * 100:.2f}%" if acc_val is not None else "N/A")
+            col2.metric("📉 Test Loss",     f"{loss_val:.4f}" if loss_val is not None else "N/A")
+
+            col3, col4, col5, col6 = st.columns(4)
+            col3.metric("🎯 Accuracy (macro)", f"{acc_macro * 100:.2f}%" if acc_macro is not None else "N/A")
+            col4.metric("🎯 Precision (macro)", f"{prec_macro * 100:.2f}%" if prec_macro is not None else "N/A")
+            col5.metric("🔁 Recall (macro)",    f"{rec_macro * 100:.2f}%" if rec_macro is not None else "N/A")
+            col6.metric("⚖️ F1-Score (macro)",  f"{f1_macro_val * 100:.2f}%" if f1_macro_val is not None else "N/A")
+
+    # Render metrik ringkas instan (bisa N/A jika tidak ada JSON)
+    render_metrics_cards(acc, loss, accuracy_macro, precision_macro, recall_macro, f1_macro)
+
+    # ── Jalankan evaluasi mendalam (menggunakan cache untuk kecepatan) ───────────
+    model_mtime = os.path.getmtime(MODEL_PATH)
+    with st.spinner("Mengevaluasi detail model (Confusion Matrix, ROC Curve, Classification Report)..."):
+        detailed_eval = get_detailed_evaluation_cached(MODEL_PATH, selected_model, IMG_SIZE, model_mtime)
+
+    if detailed_eval is None:
+        st.error("❌ Gagal mengevaluasi detail model.")
+    else:
+        y_true = detailed_eval["y_true"]
+        y_prob = detailed_eval["y_prob"]
         y_pred = np.argmax(y_prob, axis=1)
 
-    # ── Metrik utama ──────────────────────────────────────────────────────────
-    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        # Update metrik riil dari hasil evaluasi mendalam
+        acc = detailed_eval["accuracy"]
+        loss = detailed_eval["loss"]
+        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        accuracy_macro = accuracy_score(y_true, y_pred)
+        precision_macro = precision_score(y_true, y_pred, average="macro", zero_division=0)
+        recall_macro    = recall_score(y_true, y_pred, average="macro", zero_division=0)
+        f1_macro        = f1_score(y_true, y_pred, average="macro", zero_division=0)
 
-    accuracy_macro = accuracy_score(y_true, y_pred)
-    precision_macro = precision_score(y_true, y_pred, average="macro", zero_division=0)
-    recall_macro    = recall_score(y_true, y_pred, average="macro", zero_division=0)
-    f1_macro        = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        # Render ulang metrik dengan nilai riil terakurat
+        render_metrics_cards(acc, loss, accuracy_macro, precision_macro, recall_macro, f1_macro)
 
-    col1, col2 = st.columns(2)
-    col1.metric("✅ Test Accuracy", f"{acc * 100:.2f}%")
-    col2.metric("📉 Test Loss",     f"{loss:.4f}")
+        # ── Classification Report ─────────────────────────────────────────────────
+        st.subheader("📋 Precision, Recall, F1-Score per Kelas")
+        report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
 
-    col3, col4, col5, col6 = st.columns(4)
-    col3.metric("🎯 Accuracy (macro)", f"{accuracy_macro * 100:.2f}%")
-    col4.metric("🎯 Precision (macro)", f"{precision_macro * 100:.2f}%")
-    col5.metric("🔁 Recall (macro)",    f"{recall_macro * 100:.2f}%")
-    col6.metric("⚖️ F1-Score (macro)",  f"{f1_macro * 100:.2f}%")
-
-    # ── Classification Report ─────────────────────────────────────────────────
-    st.subheader("📋 Precision, Recall, F1-Score per Kelas")
-    report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
-
-    report_df = {
-        "Class":         class_names + ["macro avg", "weighted avg"],
-        "Precision (%)": [report[c]["precision"] * 100 for c in class_names] + [report["macro avg"]["precision"] * 100, report["weighted avg"]["precision"] * 100],
-        "Recall (%)":    [report[c]["recall"]    * 100 for c in class_names] + [report["macro avg"]["recall"] * 100,    report["weighted avg"]["recall"] * 100],
-        "F1-Score (%)":  [report[c]["f1-score"]  * 100 for c in class_names] + [report["macro avg"]["f1-score"] * 100,  report["weighted avg"]["f1-score"] * 100],
-        "Support":       [int(report[c]["support"]) for c in class_names] + [int(report["macro avg"]["support"]), int(report["weighted avg"]["support"])],
-    }
-    import pandas as pd
-    st.dataframe(
-        pd.DataFrame(report_df).set_index("Class").style.format({
-            "Precision (%)": "{:.2f}", "Recall (%)": "{:.2f}", "F1-Score (%)": "{:.2f}"
-        }),
-        use_container_width=True,
-    )
-
-    # ── Confusion Matrix & ROC (side-by-side) ─────────────────────────────────
-    y_true_bin = label_binarize(y_true, classes=range(len(class_names)))
-
-    col_cm, col_roc = st.columns(2)
-
-    with col_cm:
-        st.subheader("🔢 Confusion Matrix")
-        cm = confusion_matrix(y_true, y_pred)
-        fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
-        im = ax_cm.imshow(cm, interpolation="nearest", cmap="Blues")
-        plt.colorbar(im, ax=ax_cm)
-        ax_cm.set(
-            xticks=range(len(class_names)), yticks=range(len(class_names)),
-            xticklabels=class_names, yticklabels=class_names,
-            xlabel="Predicted", ylabel="True",
+        report_df = {
+            "Class":         class_names + ["macro avg", "weighted avg"],
+            "Precision (%)": [report[c]["precision"] * 100 for c in class_names] + [report["macro avg"]["precision"] * 100, report["weighted avg"]["precision"] * 100],
+            "Recall (%)":    [report[c]["recall"]    * 100 for c in class_names] + [report["macro avg"]["recall"] * 100,    report["weighted avg"]["recall"] * 100],
+            "F1-Score (%)":  [report[c]["f1-score"]  * 100 for c in class_names] + [report["macro avg"]["f1-score"] * 100,  report["weighted avg"]["f1-score"] * 100],
+            "Support":       [int(report[c]["support"]) for c in class_names] + [int(report["macro avg"]["support"]), int(report["weighted avg"]["support"])],
+        }
+        import pandas as pd
+        st.dataframe(
+            pd.DataFrame(report_df).set_index("Class").style.format({
+                "Precision (%)": "{:.2f}", "Recall (%)": "{:.2f}", "F1-Score (%)": "{:.2f}"
+            }),
+            use_container_width=True,
         )
-        plt.setp(ax_cm.get_xticklabels(), rotation=45, ha="right")
-        thresh = cm.max() / 2
-        for i in range(cm.shape[0]):
-            for j in range(cm.shape[1]):
-                ax_cm.text(j, i, cm[i, j], ha="center", va="center",
-                           color="white" if cm[i, j] > thresh else "black")
-        plt.tight_layout()
-        st.pyplot(fig_cm)
-        plt.close(fig_cm)
 
-    with col_roc:
-        st.subheader("📈 ROC Curve (One-vs-Rest)")
-        fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
-        for i, cls in enumerate(class_names):
-            try:
-                fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
-                roc_auc = auc(fpr, tpr)
-                ax_roc.plot(fpr, tpr, label=f"{cls} (AUC = {roc_auc:.2f})")
-            except Exception:
-                # Jika satu kelas tidak punya sampel positif di test set, skip
-                continue
-        ax_roc.plot([0, 1], [0, 1], "k--")
-        ax_roc.set(xlabel="False Positive Rate", ylabel="True Positive Rate", title="ROC Curve")
-        ax_roc.legend(loc="lower right")
-        ax_roc.grid(True)
-        plt.tight_layout()
-        st.pyplot(fig_roc)
-        plt.close(fig_roc)
+        # ── Confusion Matrix & ROC (side-by-side) ─────────────────────────────────
+        y_true_bin = label_binarize(y_true, classes=range(len(class_names)))
 
-    # ── Contoh Prediksi ───────────────────────────────────────────────────────
-    st.subheader("🖼️ Contoh Prediksi pada Data Test")
-    with st.spinner("Membuat prediksi..."):
-        fig = plot_sample_predictions(model, test_ds_eval, class_names)
-        st.pyplot(fig)
-        plt.close(fig)
+        col_cm, col_roc = st.columns(2)
+
+        with col_cm:
+            st.subheader("🔢 Confusion Matrix")
+            cm = confusion_matrix(y_true, y_pred)
+            fig_cm, ax_cm = plt.subplots(figsize=(6, 5))
+            im = ax_cm.imshow(cm, interpolation="nearest", cmap="Blues")
+            plt.colorbar(im, ax=ax_cm)
+            ax_cm.set(
+                xticks=range(len(class_names)), yticks=range(len(class_names)),
+                xticklabels=class_names, yticklabels=class_names,
+                xlabel="Predicted", ylabel="True",
+            )
+            plt.setp(ax_cm.get_xticklabels(), rotation=45, ha="right")
+            thresh = cm.max() / 2
+            for i in range(cm.shape[0]):
+                for j in range(cm.shape[1]):
+                    ax_cm.text(j, i, cm[i, j], ha="center", va="center",
+                               color="white" if cm[i, j] > thresh else "black")
+            plt.tight_layout()
+            st.pyplot(fig_cm)
+            plt.close(fig_cm)
+
+        with col_roc:
+            st.subheader("📈 ROC Curve (One-vs-Rest)")
+            fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
+            for i, cls in enumerate(class_names):
+                try:
+                    fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
+                    roc_auc = auc(fpr, tpr)
+                    ax_roc.plot(fpr, tpr, label=f"{cls} (AUC = {roc_auc:.2f})")
+                except Exception:
+                    # Jika satu kelas tidak punya sampel positif di test set, skip
+                    continue
+            ax_roc.plot([0, 1], [0, 1], "k--")
+            ax_roc.set(xlabel="False Positive Rate", ylabel="True Positive Rate", title="ROC Curve")
+            ax_roc.legend(loc="lower right")
+            ax_roc.grid(True)
+            plt.tight_layout()
+            st.pyplot(fig_roc)
+            plt.close(fig_roc)
+
+        # ── Contoh Prediksi ───────────────────────────────────────────────────────
+        st.subheader("🖼️ Contoh Prediksi pada Data Test")
+        with st.spinner("Membuat prediksi..."):
+            fig = plot_sample_predictions(model, test_ds_eval, class_names)
+            st.pyplot(fig)
+            plt.close(fig)
