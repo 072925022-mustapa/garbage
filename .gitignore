@@ -86,3 +86,8 @@ data/
 *.h5
 *.pt
 *.pth
+
+# =========================
+# Local-only files
+# =========================
+environment.local.yml
