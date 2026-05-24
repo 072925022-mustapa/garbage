@@ -5,9 +5,15 @@ import tensorflow as tf
 from tensorflow.keras import layers
 import os
 import time
-from PIL import Image
 import json
+import pandas as pd
+from PIL import Image
 from datetime import datetime
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix, classification_report, roc_curve, auc,
+)
+from sklearn.preprocessing import label_binarize
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 DATA_DIR    = r"input/Garbage classification/Garbage classification"
@@ -124,8 +130,6 @@ def evaluate_model_now(model_path: str, model_name: str, img_size: tuple):
         y_true = np.array(y_true)
         y_prob = np.array(y_prob)
         y_pred = np.argmax(y_prob, axis=1)
-
-        from sklearn.metrics import precision_score, recall_score, f1_score
 
         precision = precision_score(y_true, y_pred, average="macro", zero_division=0)
         recall = recall_score(y_true, y_pred, average="macro", zero_division=0)
@@ -501,8 +505,6 @@ if page == "🏠 Beranda":
     if not os.path.isdir(DATA_DIR):
         st.error(f"Dataset tidak ditemukan di: `{DATA_DIR}`")
     else:
-        import pandas as pd
-
         json_file = "model_evaluasi.json"
         df = None
 
@@ -729,8 +731,6 @@ elif page == "🏋️ Training":
 
         # ── Hitung metrik pada test set dan simpan ────────────────────────────
         with st.spinner("Menghitung metrik pada test set..."):
-            from sklearn.metrics import precision_score, recall_score, f1_score
-
             test_ds_metric = normalize_ds(test_ds) if selected_model == "CNN" else test_ds
 
             infer_start = time.time()
@@ -748,7 +748,6 @@ elif page == "🏋️ Training":
             test_loss, test_acc = model.evaluate(test_ds_metric, verbose=0)
 
             # Hitung precision, recall, f1_score
-            from sklearn.metrics import precision_score, recall_score, f1_score
             precision_m = precision_score(y_true_m, y_pred_m, average="macro", zero_division=0)
             recall_m = recall_score(y_true_m, y_pred_m, average="macro", zero_division=0)
             f1_m = f1_score(y_true_m, y_pred_m, average="macro", zero_division=0)
@@ -871,12 +870,6 @@ elif page == "🔍 Prediksi":
 
 # ── Evaluasi ─────────────────────────────────────────────────────────────────
 elif page == "📊 Evaluasi":
-    from sklearn.metrics import (
-        confusion_matrix, classification_report,
-        roc_curve, auc
-    )
-    from sklearn.preprocessing import label_binarize
-
     st.title(f"📊 Evaluasi Model — {selected_model}")
 
     model = load_saved_model(MODEL_PATH)
@@ -970,7 +963,6 @@ elif page == "📊 Evaluasi":
         # Update metrik riil dari hasil evaluasi mendalam
         acc = detailed_eval["accuracy"]
         loss = detailed_eval["loss"]
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
         accuracy_macro = accuracy_score(y_true, y_pred)
         precision_macro = precision_score(y_true, y_pred, average="macro", zero_division=0)
         recall_macro    = recall_score(y_true, y_pred, average="macro", zero_division=0)
@@ -990,7 +982,6 @@ elif page == "📊 Evaluasi":
             "F1-Score (%)":  [report[c]["f1-score"]  * 100 for c in class_names] + [report["macro avg"]["f1-score"] * 100,  report["weighted avg"]["f1-score"] * 100],
             "Support":       [int(report[c]["support"]) for c in class_names] + [int(report["macro avg"]["support"]), int(report["weighted avg"]["support"])],
         }
-        import pandas as pd
         st.dataframe(
             pd.DataFrame(report_df).set_index("Class").style.format({
                 "Precision (%)": "{:.2f}", "Recall (%)": "{:.2f}", "F1-Score (%)": "{:.2f}"
